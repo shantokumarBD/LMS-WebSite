@@ -1,4 +1,5 @@
 import Stripe from "stripe";
+import mongoose from "mongoose";
 import Purchase from "../models/purchase.model.js";
 import Course from "../models/course.model.js";
 import User from "../models/user.model.js";
@@ -10,7 +11,7 @@ import { sendError } from "../utils/errorHandler.js";
 
 // Helper to get Stripe instance (BUG-022 FIX: Singleton)
 let stripeInstance = null;
-const getStripe = () => {
+export const getStripe = () => {
   if (!process.env.STRIPE_SECRET_KEY) {
     throw new Error(
       "STRIPE_SECRET_KEY is not defined in environment variables",
@@ -26,26 +27,46 @@ import Coupon from "../models/coupon.model.js";
 
 export const createCheckoutSession = async (req, res) => {
   try {
-    const { courseIds, couponCode } = req.body; // Expect array of courseIds now
+    const { courseIds, courseId, couponCode } = req.body;
     const userId = req.user.id;
 
-    if (!courseIds || !Array.isArray(courseIds) || courseIds.length === 0) {
+    // Support both courseIds (array) and single courseId (string)
+    let targetCourseIds = [];
+    if (Array.isArray(courseIds) && courseIds.length > 0) {
+      targetCourseIds = courseIds.filter(Boolean);
+    } else if (courseId) {
+      targetCourseIds = [courseId];
+    } else if (typeof courseIds === "string" && courseIds.trim()) {
+      targetCourseIds = [courseIds.trim()];
+    }
+
+    if (targetCourseIds.length === 0) {
       return res.status(400).json({ success: false, message: "No courses selected" });
     }
 
-    const courses = await Course.find({ _id: { $in: courseIds } });
-    if (courses.length !== courseIds.length) {
+    const courses = await Course.find({ _id: { $in: targetCourseIds } });
+    if (courses.length !== targetCourseIds.length) {
       return res.status(404).json({ success: false, message: "One or more courses not found" });
     }
 
-    // Check enrollment for all courses
-    const user = await User.findById(userId);
-    const alreadyEnrolled = courses.some(course => 
-      user.enrolledCourses?.some(id => id.toString() === course._id.toString())
-    );
+    // Safely look up user (compatible with both Mongoose ObjectId and Better Auth IDs)
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user && req.user?.email) {
+      user = await User.findOne({ email: req.user.email });
+    }
 
-    if (alreadyEnrolled) {
-      return res.status(400).json({ success: false, message: "You are already enrolled in one or more of these courses." });
+    // Check enrollment for all courses
+    if (user) {
+      const alreadyEnrolled = courses.some(course => 
+        user.enrolledCourses?.some(id => id.toString() === course._id.toString())
+      );
+
+      if (alreadyEnrolled) {
+        return res.status(400).json({ success: false, message: "You are already enrolled in one or more of these courses." });
+      }
     }
 
     // Calculate total price
@@ -62,10 +83,6 @@ export const createCheckoutSession = async (req, res) => {
     let appliedCoupon = null;
 
     if (couponCode) {
-      // BUG-001 FIX: Atomic reservation of coupon to prevent race conditions.
-      // Previously, we just checked if it was valid, but incremented it in the webhook.
-      // A user could open multiple checkout sessions and use the coupon multiple times.
-      // Now, we increment `usedCount` atomically during checkout session creation.
       const coupon = await Coupon.findOneAndUpdate(
         { 
           code: couponCode.toUpperCase(), 
@@ -94,7 +111,34 @@ export const createCheckoutSession = async (req, res) => {
       }
     }
 
-    // Create session
+    // If final amount is 0 (e.g. 100% coupon or 0 price), enroll immediately without Stripe
+    if (finalAmount <= 0) {
+      for (const cId of targetCourseIds) {
+        if (user && !user.enrolledCourses.some(id => id.toString() === cId.toString())) {
+          user.enrolledCourses.push(cId);
+        }
+        await Course.findByIdAndUpdate(cId, {
+          $addToSet: { enrolledStudents: user ? user._id : userId }
+        });
+        await Purchase.create({
+          courseId: cId,
+          userId: user ? user._id : userId,
+          amount: 0,
+          status: "completed",
+          paymentId: `free_${Date.now()}_${cId}`,
+          couponCode: couponCode || "",
+        });
+      }
+      if (user) await user.save();
+
+      return res.status(200).json({
+        success: true,
+        url: `${process.env.CLIENT_URL}/purchase-success?courseId=${targetCourseIds[0]}`,
+        message: "Enrolled successfully!",
+      });
+    }
+
+    // Create Stripe checkout session
     const stripe = getStripe();
     
     // Prepare line items
@@ -104,18 +148,11 @@ export const createCheckoutSession = async (req, res) => {
             ? Math.round(course.price * (1 - discountPct / 100))
             : course.price;
         
-        // If coupon is applied, we prorate it across items or add it as a separate negative line item?
-        // Stripe Checkout doesn't easily support negative amounts in line_items.
-        // Better: Use Stripe's built-in Coupons if possible, or adjust the unit_amount proportionately.
-        // For simplicity here, we'll apply the coupon discount to the first item (if it covers it) or prorate.
-        // Actually, Stripe has "discounts" parameter for Checkout Sessions. 
-        // But for custom logic, we can just create a "Platform Discount" item.
-        
         return {
           price_data: {
             currency: "bdt",
             product_data: {
-              name: course.courseTitle,
+              name: course.courseTitle || "Course",
               description: course.subTitle || "Course enrollment",
             },
             unit_amount: Math.round(discountedPrice * 100),
@@ -124,11 +161,6 @@ export const createCheckoutSession = async (req, res) => {
         };
     });
 
-    // Add Coupon as a negative line item if applicable (Stripe requires positive amounts, so we use discounts)
-    // To keep it simple and robust, we will create one line item for the "Final Total" if a coupon is used,
-    // OR just use Stripe's native coupon system if we synced them.
-    // For this implementation, we will send the prorated final amount.
-    
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: finalAmount === subtotal ? line_items : [
@@ -137,7 +169,7 @@ export const createCheckoutSession = async (req, res) => {
             currency: "bdt",
             product_data: {
               name: "Course Bundle Checkout",
-              description: `Total for ${courses.length} courses ${couponCode ? `(Coupon ${couponCode} applied)` : ""}`,
+              description: `Total for ${courses.length} course(s) ${couponCode ? `(Coupon ${couponCode} applied)` : ""}`,
             },
             unit_amount: Math.round(finalAmount * 100),
           },
@@ -145,21 +177,23 @@ export const createCheckoutSession = async (req, res) => {
         }
       ],
       mode: "payment",
-      success_url: `${process.env.CLIENT_URL}/purchase-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/cart`,
+      success_url: `${process.env.CLIENT_URL}/purchase-success?session_id={CHECKOUT_SESSION_ID}&courseId=${targetCourseIds[0]}`,
+      cancel_url: targetCourseIds.length === 1 
+        ? `${process.env.CLIENT_URL}/courseDetails/${targetCourseIds[0]}`
+        : `${process.env.CLIENT_URL}/cart`,
       metadata: {
-        courseIds: courseIds.join(","),
-        userId: userId.toString(),
+        courseIds: targetCourseIds.join(","),
+        userId: user ? user._id.toString() : userId.toString(),
         couponCode: couponCode || "",
       },
     });
 
     // Create pending purchase records for EACH course
-    for (const cId of courseIds) {
+    for (const cId of targetCourseIds) {
       await Purchase.create({
         courseId: cId,
-        userId,
-        amount: finalAmount / courseIds.length, // Prorated amount
+        userId: user ? user._id : userId,
+        amount: finalAmount / targetCourseIds.length, // Prorated amount
         status: "pending",
         paymentId: session.id,
         couponCode: couponCode || "",
@@ -174,6 +208,94 @@ export const createCheckoutSession = async (req, res) => {
   } catch (error) {
     console.error("Stripe Session Error Details:", error);
     return sendError(res, error, "createCheckoutSession");
+  }
+};
+
+export const verifyCheckoutSession = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const userId = req.user.id;
+
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: "Session ID is required" });
+    }
+
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (!session || session.payment_status !== "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "Payment not completed or session not found",
+      });
+    }
+
+    const { courseIds, couponCode } = session.metadata || {};
+    let targetCourseIds = [];
+    if (courseIds) {
+      targetCourseIds = courseIds.split(",").filter(Boolean);
+    }
+
+    // Look up user safely
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user && req.user?.email) {
+      user = await User.findOne({ email: req.user.email });
+    }
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Update purchases to completed
+    await Purchase.updateMany(
+      { paymentId: session.id },
+      { status: "completed" }
+    );
+
+    // Enroll user in all target courses
+    for (const cId of targetCourseIds) {
+      if (!user.enrolledCourses.some((id) => id.toString() === cId.toString())) {
+        user.enrolledCourses.push(cId);
+      }
+      await Course.findByIdAndUpdate(cId, {
+        $addToSet: { enrolledStudents: user._id },
+      });
+
+      // Initialize CourseProgress
+      const existingProgress = await CourseProgress.findOne({
+        courseId: cId,
+        userId: user._id,
+      });
+      if (!existingProgress) {
+        await CourseProgress.create({
+          courseId: cId,
+          userId: user._id,
+          completedLectures: [],
+        });
+      }
+
+      // Send enrollment email
+      const course = await Course.findById(cId);
+      if (course) {
+        sendEnrollmentEmail(user.email, user.name, course.courseTitle).catch(
+          (err) => console.error("Enrollment email error:", err.message),
+        );
+      }
+    }
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Enrollment verified and completed successfully!",
+      courseId: targetCourseIds[0],
+      courses: user.enrolledCourses,
+    });
+  } catch (error) {
+    console.error("Session verification error:", error);
+    return sendError(res, error, "verifyCheckoutSession");
   }
 };
 

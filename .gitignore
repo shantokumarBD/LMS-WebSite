@@ -9,6 +9,7 @@ package-lock.json
 .env.production
 .env.*.local
 *.local
+client/.env
 
 # Logs
 logs

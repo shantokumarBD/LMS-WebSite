@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import axios from "axios";
+import api from "@/lib/api";
 import {
   Save,
   ArrowLeft,
@@ -50,9 +50,7 @@ const AdminCreateBlog = () => {
     if (isEdit) {
       const fetchBlog = async () => {
         try {
-          const response = await axios.get(
-            `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs/${id}`,
-          );
+          const response = await api.get(`/blogs/${id}`);
           if (response.data.success) {
             const blog = response.data.blog;
             setFormData({
@@ -103,15 +101,12 @@ const AdminCreateBlog = () => {
 
     try {
       setLoading(true);
-      const url = isEdit
-        ? `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs/${id}`
-        : `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs`;
+      const url = isEdit ? `/blogs/${id}` : "/blogs";
 
-      const response = await axios({
+      const response = await api({
         method: isEdit ? "PUT" : "POST",
         url,
         data,
-        withCredentials: true,
       });
 
       if (response.data.success) {

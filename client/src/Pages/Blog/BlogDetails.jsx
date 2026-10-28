@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import axios from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSelector } from "react-redux";
 import api from "@/lib/api";
@@ -29,18 +28,14 @@ const BlogDetails = () => {
     const fetchBlogData = async () => {
       try {
         setLoading(true);
-        const response = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs/${identifier}`,
-        );
+        const response = await api.get(`/blogs/${identifier}`);
         if (response.data.success) {
           const currentBlog = response.data.blog;
           setBlog(currentBlog);
 
           // Fetch Popular Blogs
           try {
-            const popRes = await axios.get(
-              `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs?sortBy=views&limit=4`,
-            );
+            const popRes = await api.get("/blogs?sortBy=views&limit=4");
             if (popRes.data.success) {
               setPopularBlogs(
                 popRes.data.blogs
@@ -55,8 +50,8 @@ const BlogDetails = () => {
           // Fetch Related Blogs
           if (currentBlog.category?._id) {
             try {
-              const relRes = await axios.get(
-                `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs?category=${currentBlog.category._id}&limit=4`,
+              const relRes = await api.get(
+                `/blogs?category=${currentBlog.category._id}&limit=4`,
               );
               if (relRes.data.success) {
                 setRelatedBlogs(

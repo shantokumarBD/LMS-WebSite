@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
+import api from "@/lib/api";
 
 export const useAdSenseInit = () => {
   const [clientId, setClientId] = useState(null);
@@ -7,9 +7,7 @@ export const useAdSenseInit = () => {
   useEffect(() => {
     const fetchAdSenseConfig = async () => {
       try {
-        const response = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/settings/adsense`,
-        );
+        const response = await api.get("/settings/adsense");
         if (response.data.success && response.data.data?.clientId) {
           setClientId(response.data.data.clientId);
         }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
+import api from "@/lib/api";
 import {
   CircleDollarSign,
   Save,
@@ -21,9 +21,7 @@ const AdminAdSense = () => {
   useEffect(() => {
     const fetchAdSense = async () => {
       try {
-        const response = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL}/api/v1/settings/adsense`,
-        );
+        const response = await api.get("/settings/adsense");
         if (response.data.success && response.data.data) {
           setAdsenseData({
             clientId: response.data.data.clientId || "",
@@ -43,11 +41,7 @@ const AdminAdSense = () => {
     e.preventDefault();
     try {
       setLoading(true);
-      const response = await axios.put(
-        `${import.meta.env.VITE_BACKEND_URL}/api/v1/settings/adsense`,
-        { data: adsenseData },
-        { withCredentials: true },
-      );
+      const response = await api.put("/settings/adsense", { data: adsenseData });
       if (response.data.success) {
         toast.success("AdSense settings updated successfully");
       }

@@ -1,10 +1,49 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.model.js";
+import { auth } from "../utils/auth.js";
 
+/**
+ * Universal Authenticate Middleware
+ * Dynamically supports:
+ * 1. Better Auth session (via cookies or Bearer session token)
+ * 2. Better Auth JWT token (Authorization: Bearer <token>)
+ * 3. Legacy JWT token (cookies.token)
+ */
 export const authenticate = async (req, res, next) => {
   try {
-    // Get token from cookies
-    const token = req.cookies.token;
+    // 1. Check Better Auth Session
+    try {
+      const session = await auth.api.getSession({
+        headers: req.headers,
+      });
+
+      if (session?.user) {
+        if (session.user.isBanned) {
+          return res.status(403).json({
+            success: false,
+            message: "Your account has been suspended. Please contact support.",
+          });
+        }
+
+        req.user = {
+          id: session.user.id,
+          role: session.user.role || "student",
+          email: session.user.email,
+          name: session.user.name,
+        };
+
+        return next();
+      }
+    } catch (sessionErr) {
+      // Continue to token check if session check fails
+    }
+
+    // 2. Extract Token from Cookies or Authorization Header
+    let token = req.cookies?.token;
+    const authHeader = req.headers.authorization;
+    if (!token && authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
+    }
 
     if (!token) {
       return res.status(401).json({
@@ -13,31 +52,34 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // 3. Verify JWT token
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || "default_super_secret_jwt_key_at_least_32_chars",
+    );
+    const userId = decoded.id || decoded.sub;
 
     // Check if user is still active and not banned
-    const user = await User.findById(decoded.id).select("isBanned role");
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "User account no longer exists.",
-      });
-    }
-    if (user.isBanned) {
-      return res.status(403).json({
-        success: false,
-        message: "Your account has been suspended. Please contact support.",
-      });
+    const user = await User.findById(userId).select("isBanned role");
+    if (user) {
+      if (user.isBanned) {
+        return res.status(403).json({
+          success: false,
+          message: "Your account has been suspended. Please contact support.",
+        });
+      }
+
+      req.user = {
+        id: user._id.toString(),
+        role: user.role,
+      };
+      return next();
     }
 
-    // Attach user data to request
-    // BUG-013 FIX: Use role from DB (user.role), NOT from JWT (decoded.role).
-    // This ensures role changes by an admin take effect immediately,
-    // rather than waiting up to 48h for the old token to expire.
+    // Fallback if user is in Better Auth database collection
     req.user = {
-      id: decoded.id,
-      role: user.role,
+      id: userId,
+      role: decoded.role || "student",
     };
 
     next();

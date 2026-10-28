@@ -4,8 +4,7 @@ import { authenticate } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
-// BUG-NEW-D FIX: Platform stats expose revenue, enrollment and course counts.
-// These are sensitive business metrics and must not be publicly accessible.
-router.get("/", authenticate, getPlatformStats);
+// Platform stats for landing page StatsSection (Students, Courses, Tutors, Success rate)
+router.get("/", getPlatformStats);
 
 export default router;

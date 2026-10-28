@@ -116,22 +116,6 @@ const CourseProgress = () => {
     },
   });
 
-  const isCourseComplete =
-    lectures.length + (quizzesData?.quizzes?.length || 0) > 0 &&
-    completedLectures.length +
-      (quizzesData?.quizzes?.filter((q) => q.latestAttempt?.isPassed).length ||
-        0) >=
-      lectures.length + (quizzesData?.quizzes?.length || 0);
-
-  const progressPercent =
-    lectures.length + (quizzesData?.quizzes?.length || 0) > 0
-      ? ((completedLectures.length +
-          (quizzesData?.quizzes?.filter((q) => q.latestAttempt?.isPassed)
-            .length || 0)) /
-          (lectures.length + (quizzesData?.quizzes?.length || 0))) *
-        100
-      : 0;
-
   const updateProgressMutation = useMutation({
     mutationFn: (lectureId) => updateLectureProgressService(id, lectureId),
     onSuccess: (data) => {
@@ -147,6 +131,23 @@ const CourseProgress = () => {
   
   // Use enriched lectures from progress API (has drip logic) if available, otherwise fallback to course data
   const lectures = progressData?.lectures || course?.lectures || [];
+  const completedLectures = progressData?.progress?.completedLectures || [];
+  const quizzes = quizzesData?.quizzes || [];
+
+  const totalItems = lectures.length + quizzes.length;
+  const passedQuizzesCount = quizzes.filter(
+    (q) => q.latestAttempt?.isPassed,
+  ).length;
+  const completedItems = completedLectures.length + passedQuizzesCount;
+
+  const isCourseComplete = totalItems > 0 && completedItems >= totalItems;
+  const isCourseCompleted =
+    lectures.length > 0 &&
+    completedLectures.length === lectures.length &&
+    (quizzes.length === 0 || quizzes.every((q) => q.latestAttempt?.isPassed));
+
+  const progressPercent =
+    totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
 
   const groupedLectures = lectures.reduce((acc, lecture) => {
     const section = lecture.sectionName || "Course Content";
@@ -157,7 +158,6 @@ const CourseProgress = () => {
     return acc;
   }, {});
 
-  const quizzes = quizzesData?.quizzes || [];
   const groupedQuizzes = quizzes.reduce((acc, quiz) => {
     const section = quiz.sectionName || "Course Content";
     if (!acc[section]) {
@@ -183,12 +183,6 @@ const CourseProgress = () => {
       [sectionName]: !prev[sectionName],
     }));
   };
-
-  const completedLectures = progressData?.progress?.completedLectures || [];
-  const isCourseCompleted =
-    lectures.length > 0 &&
-    completedLectures.length === lectures.length &&
-    (quizzes.length === 0 || quizzes.every((q) => q.latestAttempt?.isPassed));
 
   // Gating Logic
   const getSectionStatus = (sectionName) => {

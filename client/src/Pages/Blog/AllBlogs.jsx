@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import axios from "axios";
+import api from "@/lib/api";
 import {
   Loader2,
   Search,
@@ -31,16 +31,13 @@ const AllBlogs = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const blogsRes = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs`,
-          {
-            params: {
-              category:
-                selectedCategory !== "all" ? selectedCategory : undefined,
-              search: "",
-            },
+        const blogsRes = await api.get("/blogs", {
+          params: {
+            category:
+              selectedCategory !== "all" ? selectedCategory : undefined,
+            search: "",
           },
-        );
+        });
 
         if (blogsRes.data.success) {
           let fetchedBlogs = blogsRes.data.blogs;
@@ -63,9 +60,7 @@ const AllBlogs = () => {
           setBlogs(fetchedBlogs);
         }
 
-        const catRes = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/categories`,
-        );
+        const catRes = await api.get("/categories");
         if (catRes.data.success) {
           setCategories(catRes.data.categories);
         }

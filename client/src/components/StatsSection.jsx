@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Users, BookOpen, GraduationCap, Award, Loader2 } from "lucide-react";
 import CountUp from "react-countup";
-import axios from "axios";
+import api from "@/lib/api";
 
 const StatsSection = () => {
   const [statsData, setStatsData] = useState(null);
@@ -10,9 +10,7 @@ const StatsSection = () => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const { data } = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/stats`,
-        );
+        const { data } = await api.get("/stats");
         if (data.success) {
           setStatsData(data.stats);
         }

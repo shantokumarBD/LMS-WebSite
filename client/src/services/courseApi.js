@@ -120,8 +120,13 @@ export const getCourseStatusService = async (courseId) => {
 };
 
 // Purchase / Payment
-export const createCheckoutSessionService = async (courseId) => {
-  const response = await api.post(`/purchase/checkout`, { courseId });
+export const createCheckoutSessionService = async (courseId, couponCode) => {
+  const courseIds = Array.isArray(courseId) ? courseId : [courseId];
+  const response = await api.post(`/purchase/checkout`, {
+    courseIds,
+    courseId: courseIds[0],
+    couponCode,
+  });
   return response.data;
 };
 

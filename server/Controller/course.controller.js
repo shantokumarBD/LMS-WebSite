@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Course from "../models/course.model.js";
 import User from "../models/user.model.js";
 import Lecture from "../models/lecture.model.js";
@@ -731,8 +732,19 @@ export const enrollCourse = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId);
-    if (user.enrolledCourses.some((id) => id.toString() === courseId)) {
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user && req.user?.email) {
+      user = await User.findOne({ email: req.user.email });
+    }
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (user.enrolledCourses?.some((id) => id.toString() === courseId)) {
       return res
         .status(400)
         .json({ success: false, message: "Already enrolled in this course" });
@@ -743,7 +755,7 @@ export const enrollCourse = async (req, res) => {
     await user.save();
 
     // Add user to course's enrolledStudents
-    course.enrolledStudents.push(userId);
+    course.enrolledStudents.push(user._id);
     await course.save();
 
     return res.status(200).json({
@@ -788,14 +800,30 @@ export const checkEnrollmentAndWishlist = async (req, res) => {
     const { courseId } = req.params;
     const userId = req.user.id;
 
-    const user = await User.findById(userId);
-    const isEnrolled = user.enrolledCourses.some(
-      (id) => id.toString() === courseId,
-    );
-    const isWishlisted = user.wishlist.some((id) => id.toString() === courseId);
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user && req.user?.email) {
+      user = await User.findOne({ email: req.user.email });
+    }
+
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        isEnrolled: false,
+        isWishlisted: false,
+        progress: null,
+      });
+    }
+
+    const isEnrolled =
+      user.enrolledCourses?.some((id) => id.toString() === courseId) || false;
+    const isWishlisted =
+      user.wishlist?.some((id) => id.toString() === courseId) || false;
 
     const progress = await CourseProgress.findOne({
-      userId,
+      userId: user._id,
       courseId,
     });
 

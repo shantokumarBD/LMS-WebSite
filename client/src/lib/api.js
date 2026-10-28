@@ -1,8 +1,17 @@
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: "/api/v1",
+  baseURL: import.meta.env.API_URL || import.meta.env.VITE_API_URL || "/api/v1",
   withCredentials: true,
+});
+
+// Request interceptor to attach JWT token if present
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("auth_jwt_token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 // Response interceptor for error handling

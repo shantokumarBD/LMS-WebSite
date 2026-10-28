@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
+import api from "@/lib/api";
 
 const AdSense = ({ slotId, style = { display: "block" }, format = "auto" }) => {
   const [adSenseConfig, setAdSenseConfig] = useState(null);
@@ -7,9 +7,7 @@ const AdSense = ({ slotId, style = { display: "block" }, format = "auto" }) => {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const response = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/settings/adsense`,
-        );
+        const response = await api.get("/settings/adsense");
         if (response.data.success) {
           setAdSenseConfig(response.data.data);
         }

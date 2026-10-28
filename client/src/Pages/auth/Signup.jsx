@@ -61,22 +61,21 @@ const Signup = () => {
       }
     },
     onError: (error) => {
-      // Handle different error scenarios with user-friendly messages
-      const errorMessage = error.message?.toLowerCase() || "";
+      // Use backend error message if available
+      const backendMessage = error.response?.data?.message;
+      if (backendMessage) {
+        toast.error(backendMessage);
+        return;
+      }
 
-      if (errorMessage.includes("email") && errorMessage.includes("already")) {
-        toast.error("This email is already registered. Please login instead.");
-      } else if (
+      const errorMessage = (error.message || "").toLowerCase();
+      if (
         errorMessage.includes("network") ||
         errorMessage.includes("fetch")
       ) {
         toast.error(
           "Network error. Please check your connection and try again.",
         );
-      } else if (errorMessage.includes("validation")) {
-        toast.error("Please check your input and try again.");
-      } else if (errorMessage.includes("server")) {
-        toast.error("Server error. Please try again later.");
       } else {
         toast.error(error.message || "Signup failed. Please try again.");
       }

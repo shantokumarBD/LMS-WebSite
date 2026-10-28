@@ -5,7 +5,6 @@ import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import mongoSanitize from "express-mongo-sanitize";
-import xssClean from "xss-clean";
 import rateLimit from "express-rate-limit";
 import hpp from "hpp";
 import { globalErrorMiddleware } from "./utils/errorHandler.js";
@@ -31,6 +30,8 @@ import couponRouter from "./Routers/coupon.route.js";
 import forumRouter from "./Routers/forum.route.js";
 import path from "path";
 import { fileURLToPath } from "url";
+import { toNodeHandler } from "better-auth/node";
+import { auth } from "./utils/auth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,90 +46,14 @@ const _dirname = path.resolve();
 // 1. HTTP Security Headers
 app.use(helmet());
 
-// 2. Rate Limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per window
-  message: {
-    success: false,
-    message:
-      "Too many requests from this IP, please try again after 15 minutes",
-  },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
-
-// Specific limiter for authentication routes (stricter)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10, // Only 10 login/register attempts per 15 mins
-  message: {
-    success: false,
-    message:
-      "Too many authentication attempts, please try again after 15 minutes",
-  },
-});
-
-// Extra strict limiter for password reset
-const sensitiveLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5, // Only 5 attempts per hour
-  message: {
-    success: false,
-    message: "Too many attempts, please try again after an hour",
-  },
-});
-
-app.use("/api/", limiter);
-app.use("/api/v1/users/login", authLimiter);
-app.use("/api/v1/users/register", authLimiter);
-app.use("/api/v1/users/forgot-password", sensitiveLimiter);
-app.use("/api/v1/users/reset-password", sensitiveLimiter);
-// 3. Express 5 compatibility shim (Required for express-mongo-sanitize & xss-clean)
-app.use((req, res, next) => {
-  if (req.query) {
-    Object.defineProperty(req, "query", {
-      value: { ...req.query },
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
-  if (req.params) {
-    Object.defineProperty(req, "params", {
-      value: { ...req.params },
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  }
-  next();
-});
-
-// 4. Input Sanitization
-// Specific route for Stripe Webhook to handle raw body (MUST BE BEFORE express.json())
-app.post("/api/v1/purchase/webhook", express.raw({ type: "application/json" }));
-
-app.use(express.json({ limit: "1mb" })); // Protection against large payloads
-app.use(mongoSanitize()); // Protection against NoSQL Injection
-app.use(xssClean()); // Protection against XSS attacks
-app.use(hpp()); // Protection against HTTP Parameter Pollution attacks
-
-// CORS configuration — driven by environment variables
-// Development: CLIENT_URL=http://localhost:5173
-// Production: CLIENT_URL=https://your-deployed-frontend.com
-//
-// BUG-007 FIX: Removed wildcard *.vercel.app rule.
-// Previously ANY .vercel.app subdomain was allowed, meaning an attacker
-// could host a malicious site on Vercel and bypass CORS.
-// Now only explicitly listed origins are permitted.
+// 2. CORS configuration — driven by environment variables
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:5174",
   "http://127.0.0.1:5174",
-  process.env.CLIENT_URL,          // e.g. https://your-app.vercel.app
-  process.env.ALLOWED_ORIGIN_2,    // optional second frontend domain
+  process.env.CLIENT_URL,
+  process.env.ALLOWED_ORIGIN_2,
 ].filter(Boolean);
 
 app.use(
@@ -147,8 +72,55 @@ app.use(
   }),
 );
 
+// 3. Mount Better Auth handler BEFORE body parsers
+app.all("/api/auth/*", toNodeHandler(auth));
+
+// 4. Rate Limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per window
+  message: {
+    success: false,
+    message:
+      "Too many requests from this IP, please try again after 15 minutes",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20, // 20 login/register attempts per 15 mins
+  message: {
+    success: false,
+    message:
+      "Too many authentication attempts, please try again after 15 minutes",
+  },
+});
+
+const sensitiveLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  message: {
+    success: false,
+    message: "Too many attempts, please try again after an hour",
+  },
+});
+
+app.use("/api/", limiter);
+app.use("/api/v1/users/login", authLimiter);
+app.use("/api/v1/users/register", authLimiter);
+app.use("/api/v1/users/forgot-password", sensitiveLimiter);
+app.use("/api/v1/users/reset-password", sensitiveLimiter);
+
+// 5. Input Sanitization & Parsers
+// Specific route for Stripe Webhook to handle raw body (MUST BE BEFORE express.json())
+app.post("/api/v1/purchase/webhook", express.raw({ type: "application/json" }));
+
+app.use(express.json({ limit: "2mb" }));
+app.use(mongoSanitize());
+app.use(hpp());
 app.use(bodyParser.urlencoded({ extended: true }));
-// app.use(bodyParser.json()); // Replaced by express.json() above for security
 app.use(cookieParser());
 
 // Serve uploaded files statically

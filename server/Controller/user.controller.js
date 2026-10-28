@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import User from "../models/user.model.js";
 import Course from "../models/course.model.js";
 import Review from "../models/review.model.js";
@@ -24,6 +25,7 @@ import {
   sendVerificationEmail,
 } from "../utils/email.js";
 import { sendError } from "../utils/errorHandler.js";
+import { getStripe } from "./purchase.controller.js";
 
 export const registerUser = async (req, res) => {
   try {
@@ -179,13 +181,26 @@ export const loginUser = async (req, res) => {
 
 export const getCurrentUser = async (req, res) => {
   try {
-    // req.user.id is set by auth middleware
-    const user = await User.findById(req.user.id).select("-password");
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(req.user.id)) {
+      user = await User.findById(req.user.id).select("-password");
+    } else if (req.user.email) {
+      user = await User.findOne({ email: req.user.email }).select("-password");
+    }
 
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "Account not found",
+      return res.json({
+        success: true,
+        user: {
+          id: req.user.id,
+          name: req.user.name || "User",
+          email: req.user.email || "",
+          role: req.user.role || "student",
+          bio: "",
+          socialLinks: {},
+          photoUrl: null,
+          enrolledCourses: [],
+        },
       });
     }
 
@@ -326,10 +341,14 @@ export const updateProfile = async (req, res) => {
 // Get user's enrolled courses
 export const getEnrolledCourses = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).populate({
-      path: "enrolledCourses",
-      populate: { path: "creator", select: "_id name profilePicture bio description role" },
-    });
+    const userId = req.user.id;
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user && req.user?.email) {
+      user = await User.findOne({ email: req.user.email });
+    }
 
     if (!user) {
       return res
@@ -337,13 +356,80 @@ export const getEnrolledCourses = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
+    // Auto-sync / Auto-heal from Stripe:
+    // Check if user has any pending or completed purchases and sync with enrolledCourses
+    try {
+      const purchases = await Purchase.find({
+        userId: user._id,
+        status: { $in: ["pending", "completed"] },
+      });
+
+      if (purchases.length > 0) {
+        const stripe = getStripe();
+        let updated = false;
+
+        for (const purchase of purchases) {
+          // If pending, check with Stripe whether session was paid
+          if (
+            purchase.status === "pending" &&
+            purchase.paymentId &&
+            purchase.paymentId.startsWith("cs_")
+          ) {
+            try {
+              const session = await stripe.checkout.sessions.retrieve(
+                purchase.paymentId,
+              );
+              if (session && session.payment_status === "paid") {
+                purchase.status = "completed";
+                await purchase.save();
+                updated = true;
+              }
+            } catch (stripeErr) {
+              console.warn("Stripe session check warning:", stripeErr.message);
+            }
+          }
+
+          // Ensure any completed purchase is reflected in user.enrolledCourses
+          if (purchase.status === "completed") {
+            const cId = purchase.courseId.toString();
+            if (
+              !user.enrolledCourses.some((id) => id.toString() === cId)
+            ) {
+              user.enrolledCourses.push(purchase.courseId);
+              updated = true;
+            }
+            await Course.findByIdAndUpdate(purchase.courseId, {
+              $addToSet: { enrolledStudents: user._id },
+            });
+          }
+        }
+
+        if (updated) {
+          await user.save();
+        }
+      }
+    } catch (syncErr) {
+      console.warn("Purchase auto-sync warning:", syncErr.message);
+    }
+
+    // Populate user's enrolled courses
+    await user.populate({
+      path: "enrolledCourses",
+      populate: {
+        path: "creator",
+        select: "_id name profilePicture bio description role",
+      },
+    });
+
     // Fetch progress for all enrolled courses
-    const progress = await CourseProgress.find({ userId: req.user.id });
+    const progress = await CourseProgress.find({
+      $or: [{ userId: user._id }, { userId: req.user.id }],
+    });
 
     return res.status(200).json({
       success: true,
-      courses: user.enrolledCourses,
-      progress,
+      courses: user.enrolledCourses || [],
+      progress: progress || [],
     });
   } catch (error) {
     return sendError(res, error, "userController");

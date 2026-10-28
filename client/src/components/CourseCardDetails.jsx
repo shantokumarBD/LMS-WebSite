@@ -74,6 +74,7 @@ const CourseCardDetails = () => {
   const queryClient = useQueryClient();
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
+  const { siteName } = useSelector((state) => state.settings);
   const [activeTab, setActiveTab] = useState("About");
   const [isCurriculumOpen, setIsCurriculumOpen] = useState(true);
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState(null);
@@ -150,7 +151,7 @@ const CourseCardDetails = () => {
   const enrollMutation = useMutation({
     mutationFn: async () => {
       if (course?.price > 0) {
-        const data = await createCheckoutSessionService(id);
+        const data = await createCheckoutSessionService(id, couponInput);
         if (data.url) {
           window.location.href = data.url; // Redirect to Stripe
         }
@@ -344,7 +345,6 @@ const CourseCardDetails = () => {
   if (!course) return null;
 
   const tabs = ["About", "Curriculum", "Instructor", "Reviews"];
-  const { siteName } = useSelector((state) => state.settings);
 
   const courseSchema = {
     "@context": "https://schema.org",
@@ -1083,11 +1083,18 @@ const CourseCardDetails = () => {
                     }
                   }}
                 >
-                  {isCreator
-                    ? "Manage Course"
-                    : isEnrolled
-                      ? "Continue Learning"
-                      : "Enroll Now"}
+                  {enrollMutation.isPending ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span>Processing...</span>
+                    </div>
+                  ) : isCreator ? (
+                    "Manage Course"
+                  ) : isEnrolled ? (
+                    "Continue Learning"
+                  ) : (
+                    "Enroll Now"
+                  )}
                 </Button>
                 {!isEnrolled && !isCreator && (
                   <p className="text-center text-[10px] font-bold text-gray-400 uppercase tracking-widest pt-2">

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
+import api from "@/lib/api";
 import BlogCard from "../../components/Blog/BlogCard";
 import AdSense from "../../components/Blog/AdSense";
 import {
@@ -51,16 +51,13 @@ const BlogPage = () => {
       try {
         setLoading(true);
         // Fetch blogs
-        const blogsRes = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/blogs`,
-          {
-            params: {
-              category:
-                selectedCategory !== "all" ? selectedCategory : undefined,
-              search: searchQuery,
-            },
+        const blogsRes = await api.get("/blogs", {
+          params: {
+            category:
+              selectedCategory !== "all" ? selectedCategory : undefined,
+            search: searchQuery,
           },
-        );
+        });
 
         if (blogsRes.data.success) {
           const allBlogs = blogsRes.data.blogs;
@@ -70,9 +67,7 @@ const BlogPage = () => {
         }
 
         // Fetch categories
-        const catRes = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || ""}/api/v1/categories`,
-        );
+        const catRes = await api.get("/categories");
         if (catRes.data.success) {
           setCategories(catRes.data.categories);
         }

@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import CourseProgress from "../models/courseProgress.model.js";
 import Course from "../models/course.model.js";
 import User from "../models/user.model.js";
@@ -15,10 +16,29 @@ export const getUserCourseProgress = async (req, res) => {
     const { courseId } = req.params;
     const userId = req.user.id;
 
-    // Enrollment check
-    const purchase = await Purchase.findOne({ userId, courseId, status: "completed" });
-    
-    if (!purchase) {
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user && req.user?.email) {
+      user = await User.findOne({ email: req.user.email });
+    }
+
+    const userObjectId = user?._id || userId;
+
+    // Check enrollment via User model OR Purchase record
+    const isEnrolledInUser = user?.enrolledCourses?.some(
+      (id) => id.toString() === courseId,
+    );
+
+    const purchase = await Purchase.findOne({
+      $or: [
+        { userId: userObjectId, courseId, status: "completed" },
+        { userId, courseId, status: "completed" },
+      ],
+    });
+
+    if (!purchase && !isEnrolledInUser) {
       return res.status(403).json({
         success: false,
         message: "Access denied. You are not enrolled in this course.",
@@ -26,46 +46,63 @@ export const getUserCourseProgress = async (req, res) => {
     }
 
     // Expiry check
-    if (purchase.expiryDate && new Date() > purchase.expiryDate) {
+    if (purchase?.expiryDate && new Date() > purchase.expiryDate) {
       return res.status(403).json({
         success: false,
-        message: "Access expired. Your enrollment duration for this course has ended.",
+        message:
+          "Access expired. Your enrollment duration for this course has ended.",
         isExpired: true,
       });
     }
 
     // 1. Find enrollment (Purchase) date
-    const enrollmentDate = purchase ? purchase.createdAt : new Date(0);
+    const enrollmentDate = purchase
+      ? purchase.createdAt
+      : user?.createdAt || new Date(0);
 
     // 2. Find progress entry
-    let progress = await CourseProgress.findOne({ userId, courseId });
+    let progress = await CourseProgress.findOne({
+      $or: [
+        { userId: userObjectId, courseId },
+        { userId, courseId },
+      ],
+    });
     if (!progress) {
       progress = { completedLectures: [], isCompleted: false };
     }
 
     // 3. Fetch course lectures to calculate drip status
     const course = await Course.findById(courseId).populate("lectures");
+    if (!course) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Course not found" });
+    }
+
     const now = new Date();
-    
     // Day difference helper
-    const getDaysSince = (date) => Math.floor((now - new Date(date)) / (1000 * 60 * 60 * 24));
+    const getDaysSince = (date) =>
+      Math.floor((now - new Date(date)) / (1000 * 60 * 60 * 24));
     const daysSinceEnrollment = getDaysSince(enrollmentDate);
 
     // Filter/Tag lectures for frontend
-    const enrichedLectures = course.lectures.map(lecture => {
-        const isLocked = daysSinceEnrollment < (lecture.releaseOffset || 0);
-        return {
-            ...lecture.toObject(),
-            isDripLocked: isLocked,
-            availableIn: Math.max(0, (lecture.releaseOffset || 0) - daysSinceEnrollment)
-        };
+    const enrichedLectures = (course.lectures || []).map((lecture) => {
+      const isLocked = daysSinceEnrollment < (lecture.releaseOffset || 0);
+      return {
+        ...lecture.toObject(),
+        isDripLocked: isLocked,
+        availableIn: Math.max(
+          0,
+          (lecture.releaseOffset || 0) - daysSinceEnrollment,
+        ),
+      };
     });
 
     return res.status(200).json({
       success: true,
       progress,
       enrollmentDate,
-      lectures: enrichedLectures
+      lectures: enrichedLectures,
     });
   } catch (error) {
     return sendError(res, error, "courseProgressController");
@@ -84,21 +121,30 @@ export const updateLectureProgress = async (req, res) => {
       return res.status(404).json({ success: false, message: "Course not found" });
     }
 
-    const user = await User.findById(userId);
-    if (course.price > 0) {
-      // For paid courses, ensure there's a completed purchase
-      const purchase = await Purchase.findOne({ userId, courseId, status: "completed" });
-      if (!purchase) {
-        return res.status(403).json({ success: false, message: "You must purchase this course to track progress." });
-      }
-    } else {
-      // For free courses, rely on enrolledCourses
-      if (!user.enrolledCourses.includes(courseId)) {
-        return res.status(403).json({
-          success: false,
-          message: "Unauthorized. You are not enrolled in this course.",
-        });
-      }
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      user = await User.findById(userId);
+    }
+    if (!user && req.user?.email) {
+      user = await User.findOne({ email: req.user.email });
+    }
+
+    const userObjectId = user?._id || userId;
+    const isEnrolled = user?.enrolledCourses?.some(
+      (id) => id.toString() === courseId,
+    );
+    const purchase = await Purchase.findOne({
+      $or: [
+        { userId: userObjectId, courseId, status: "completed" },
+        { userId, courseId, status: "completed" },
+      ],
+    });
+
+    if (!purchase && !isEnrolled) {
+      return res.status(403).json({
+        success: false,
+        message: "You must be enrolled in this course to track progress.",
+      });
     }
 
     // Find or Create Progress
