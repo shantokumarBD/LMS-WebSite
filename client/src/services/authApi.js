@@ -2,40 +2,58 @@ import api from "../lib/api";
 import { authClient } from "../lib/auth-client";
 
 export const registerUser = async (userData) => {
-  // Better Auth Sign Up with additional fields
-  const { data, error } = await authClient.signUp.email({
-    email: userData.email,
-    password: userData.password,
-    name: userData.name,
-    role: userData.role || "student",
-  });
-
-  if (error) {
-    throw new Error(error.message || "Registration failed");
-  }
-
-  // Fetch JWT token using Better Auth JWT plugin
-  let jwtToken = null;
+  // 1. Attempt Better Auth Sign Up with additional fields
   try {
-    const tokenRes = await authClient.token();
-    if (tokenRes?.data?.token) {
-      jwtToken = tokenRes.data.token;
-      localStorage.setItem("auth_jwt_token", jwtToken);
+    const { data, error } = await authClient.signUp.email({
+      email: userData.email,
+      password: userData.password,
+      name: userData.name,
+      role: userData.role || "student",
+    });
+
+    if (!error && data) {
+      let jwtToken = null;
+      try {
+        const tokenRes = await authClient.token();
+        if (tokenRes?.data?.token) {
+          jwtToken = tokenRes.data.token;
+          localStorage.setItem("auth_jwt_token", jwtToken);
+        }
+      } catch (e) {
+        console.warn("Could not retrieve Better Auth JWT token:", e);
+      }
+
+      return {
+        success: true,
+        message: "Account created successfully!",
+        token: jwtToken,
+        user: data?.user || {
+          name: userData.name,
+          email: userData.email,
+          role: userData.role || "student",
+        },
+      };
     }
-  } catch (e) {
-    console.warn("Could not retrieve Better Auth JWT token:", e);
+
+    if (error && !error.message?.toLowerCase().includes("fetch") && !error.message?.toLowerCase().includes("network")) {
+      throw new Error(error.message || "Registration failed");
+    }
+  } catch (betterAuthErr) {
+    if (
+      betterAuthErr.message &&
+      !betterAuthErr.message.toLowerCase().includes("fetch") &&
+      !betterAuthErr.message.toLowerCase().includes("network")
+    ) {
+      throw betterAuthErr;
+    }
   }
 
-  return {
-    success: true,
-    message: "Account created successfully!",
-    token: jwtToken,
-    user: data?.user || {
-      name: userData.name,
-      email: userData.email,
-      role: userData.role || "student",
-    },
-  };
+  // 2. Fallback to server /api/v1/users/register
+  const legacyRes = await api.post("/users/register", userData);
+  if (legacyRes.data?.token) {
+    localStorage.setItem("auth_jwt_token", legacyRes.data.token);
+  }
+  return legacyRes.data;
 };
 
 export const loginUser = async (userData) => {
