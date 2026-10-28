@@ -1,11 +1,19 @@
 import { createAuthClient } from "better-auth/react";
 import { jwtClient } from "better-auth/client/plugins";
 
-export const authClient = createAuthClient({
-  baseURL:
+const getServerUrl = () => {
+  const url =
     import.meta.env.SERVER_URL ||
+    import.meta.env.BACKEND_URL ||
     import.meta.env.VITE_SERVER_URL ||
-    "http://localhost:4000",
+    import.meta.env.VITE_BACKEND_URL ||
+    (import.meta.env.API_URL ? import.meta.env.API_URL.replace(/\/api\/v1\/?$/, "") : null) ||
+    "http://localhost:4000";
+  return url.replace(/\/+$/, "");
+};
+
+export const authClient = createAuthClient({
+  baseURL: getServerUrl(),
   plugins: [
     jwtClient(),
   ],

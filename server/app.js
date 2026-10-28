@@ -46,14 +46,16 @@ const _dirname = path.resolve();
 // 1. HTTP Security Headers
 app.use(helmet());
 
-// 2. CORS configuration — driven by environment variables
+// 2. CORS configuration — driven by environment variables + Vercel support
+const normalizeUrl = (url) => (url ? url.replace(/\/+$/, "").toLowerCase() : "");
+
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://localhost:5174",
   "http://127.0.0.1:5174",
-  process.env.CLIENT_URL,
-  process.env.ALLOWED_ORIGIN_2,
+  normalizeUrl(process.env.CLIENT_URL),
+  normalizeUrl(process.env.ALLOWED_ORIGIN_2),
 ].filter(Boolean);
 
 app.use(
@@ -62,7 +64,12 @@ app.use(
       // Allow requests with no origin (e.g., mobile apps, curl, Postman)
       if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
+      const normalized = normalizeUrl(origin);
+      if (
+        allowedOrigins.includes(normalized) ||
+        normalized.endsWith(".vercel.app") ||
+        normalized.includes("vercel.app")
+      ) {
         return callback(null, true);
       }
 

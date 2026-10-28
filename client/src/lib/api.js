@@ -1,7 +1,21 @@
 import axios from "axios";
 
+const getBaseUrl = () => {
+  const rawApiUrl =
+    import.meta.env.API_URL ||
+    import.meta.env.VITE_API_URL ||
+    import.meta.env.SERVER_URL ||
+    import.meta.env.VITE_SERVER_URL ||
+    "";
+
+  if (!rawApiUrl) return "/api/v1";
+
+  const trimmed = rawApiUrl.replace(/\/+$/, "");
+  return trimmed.endsWith("/api/v1") ? trimmed : `${trimmed}/api/v1`;
+};
+
 const api = axios.create({
-  baseURL: import.meta.env.API_URL || import.meta.env.VITE_API_URL || "/api/v1",
+  baseURL: getBaseUrl(),
   withCredentials: true,
 });
 
